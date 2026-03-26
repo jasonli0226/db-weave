@@ -17,8 +17,6 @@ db-weave lets you define database schemas in a human-readable text format, insta
 - **Live Preview** — Real-time parsing and visualization as you type with Monaco editor
 - **Comprehensive Error Reporting** — Parse errors with line and column information
 
-![Export Options](db-weave-app/public/images/feature-export-options.png)
-
 ## Quick Start
 
 ### Prerequisites
