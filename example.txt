@@ -1,0 +1,201 @@
+// Sample POS System Database Schema
+
+/// Payment method types
+enum payment_method {
+  /// Cash payment
+  cash
+  /// Visa card
+  visa
+  /// Mastercard
+  master
+  /// Alipay mobile payment
+  alipay
+  /// WeChat Pay
+  wechat
+  /// Gift card
+  giftcard
+}
+
+/// Sale status types
+enum sale_status {
+  completed
+  voided
+  refunded
+  hold
+}
+
+/// Employee role types
+enum employee_role {
+  admin
+  cashier
+  manager
+}
+
+/// Product categories (Electronics, Beverages, Clothing...)
+table categories {
+  id              bigint         @pk
+  name            varchar(80)    @not_null
+  parent_id       bigint         @fk(categories.id) @on_delete(set_null)  // for sub-categories
+  description     varchar(300)
+}
+
+/// Customers (can be optional for retail, more important for restaurants/loyalty)
+table customers {
+  id              bigint         @pk
+  name            varchar(120)   @not_null
+  phone           varchar(20)    @unique
+  email           varchar(180)   @unique
+  points          integer        @default(0) @check(points >= 0)
+  created_at      timestamp      @default(now())
+  updated_at      timestamp      @default(now())
+}
+
+/// Suppliers / Vendors
+table suppliers {
+  id              bigint         @pk
+  name            varchar(120)   @not_null
+  contact_person  varchar(100)
+  phone           varchar(20)
+  email           varchar(180)
+  address         varchar(300)
+  created_at      timestamp      @default(now())
+}
+
+/// Optional: Store locations (for multi-branch businesses)
+table stores {
+  id              bigint         @pk
+  name            varchar(100)   @not_null
+  code            varchar(20)    @unique
+  address         varchar(300)
+  phone           varchar(20)
+  is_active       boolean        @default(true)
+}
+
+/// Cashiers / Employees who operate POS
+table employees {
+  id              bigint         @pk
+  store_id        bigint         @fk(stores.id) @on_delete(set_null)
+  name            varchar(100)   @not_null
+  username        varchar(50)    @unique
+  pin_code        varchar(6)                    // 4-6 digit PIN for quick login
+  role            employee_role  @default('cashier')
+  active          boolean        @default(true)
+  created_at      timestamp      @default(now())
+}
+
+/// Products / Inventory items
+table products {
+  id              bigint         @pk
+  sku             varchar(50)    @unique
+  barcode         varchar(50)    @unique         // EAN13, UPC, etc.
+  name            varchar(180)   @not_null
+  description     text
+  category_id     bigint         @fk(categories.id) @on_delete(set_null)
+  supplier_id     bigint         @fk(suppliers.id) @on_delete(set_null)
+  brand           varchar(100)
+  unit_price      decimal(12,2)  @not_null @check(unit_price > 0)
+  cost_price      decimal(12,2)  @check(cost_price >= 0)
+  tax_rate        decimal(5,2)   @default(0)     // e.g. 10.00 = 10%
+  stock_quantity  integer        @default(0)
+  low_stock_threshold integer    @default(10)
+  is_active       boolean        @default(true)
+  tags            text[]                         // array type for product tags
+  created_at      timestamp      @default(now())
+  updated_at      timestamp      @default(now())
+
+  @index(category_id, is_active)
+  @index(sku)
+  @index(barcode)
+}
+
+/// Sale transactions (main receipt header)
+table sales {
+  id              bigint         @pk
+  receipt_number  varchar(30)    @unique
+  customer_id     bigint         @fk(customers.id) @on_delete(set_null)
+  cashier_id      bigint         @fk(employees.id) @on_delete(restrict) @not_null
+  store_id        bigint         @fk(stores.id) @on_delete(restrict) @not_null
+  sale_date       timestamp      @default(now())
+  subtotal        decimal(12,2)  @not_null
+  tax_amount      decimal(12,2)  @default(0)
+  discount_amount decimal(12,2)  @default(0)
+  total_amount    decimal(12,2)  @not_null
+  status          sale_status    @default('completed')
+  notes           varchar(500)
+  created_at      timestamp      @default(now())
+
+  @index(customer_id)
+  @index(cashier_id)
+  @index(store_id, sale_date)
+  @check(total_amount >= 0)
+}
+
+/// Sale items / line items of each receipt
+table sale_items {
+  id              bigint         @pk
+  sale_id         bigint         @fk(sales.id) @on_delete(cascade) @not_null
+  product_id      bigint         @fk(products.id) @on_delete(restrict) @not_null
+  quantity        decimal(10,3)  @not_null @check(quantity > 0)   // support 0.5 kg, 0.33 liter...
+  unit_price      decimal(12,2)  @not_null
+  discount_amount decimal(12,2)  @default(0)
+  tax_amount      decimal(12,2)  @default(0)
+  subtotal        decimal(12,2)  @not_null       // after discount before tax
+
+  @index(sale_id)
+  @index(product_id)
+}
+
+/// Payment records (supports split payments)
+table payments {
+  id              bigint         @pk
+  sale_id         bigint         @fk(sales.id) @on_delete(cascade) @not_null
+  amount          decimal(12,2)  @not_null @check(amount > 0)
+  payment_type    payment_method @not_null
+  reference_no    varchar(100)                    // transaction ID from payment gateway
+  paid_at         timestamp      @default(now())
+
+  @index(sale_id)
+}
+
+/// Purchase orders from suppliers
+table purchase_orders {
+  id              bigint         @pk
+  supplier_id     bigint         @fk(suppliers.id) @on_delete(restrict) @not_null
+  store_id        bigint         @fk(stores.id) @on_delete(restrict) @not_null
+  order_date      timestamp      @default(now())
+  expected_date   timestamp
+  total_amount    decimal(12,2)  @not_null
+  status          varchar(20)    @default('pending')   // pending, received, cancelled
+  notes           text
+  created_at      timestamp      @default(now())
+
+  @index(supplier_id)
+  @index(store_id, order_date)
+}
+
+/// Line items in a purchase order
+table purchase_order_items {
+  id              bigint         @pk
+  order_id        bigint         @fk(purchase_orders.id) @on_delete(cascade) @not_null
+  product_id      bigint         @fk(products.id) @on_delete(restrict) @not_null
+  quantity        integer        @not_null @check(quantity > 0)
+  unit_cost       decimal(12,2)  @not_null
+  subtotal        decimal(12,2)  @not_null
+
+  @unique(order_id, product_id)
+}
+
+/// Inventory adjustment log (stock-in, stock-out, adjustments)
+table inventory_log {
+  id              bigint         @pk
+  product_id      bigint         @fk(products.id) @on_delete(cascade) @not_null
+  store_id        bigint         @fk(stores.id) @on_delete(cascade) @not_null
+  change_qty      integer        @not_null        // positive = stock in, negative = stock out
+  reason          varchar(50)    @not_null         // sale, purchase, adjustment, return, damage
+  reference_id    bigint                           // links to sale_id, purchase_order_id, etc.
+  performed_by    bigint         @fk(employees.id) @on_delete(set_null)
+  created_at      timestamp      @default(now())
+
+  @index(product_id, created_at)
+  @index(store_id)
+}
